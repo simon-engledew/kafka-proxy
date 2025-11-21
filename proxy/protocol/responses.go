@@ -10,6 +10,8 @@ import (
 const (
 	apiKeyMetadata        = 3
 	apiKeyFindCoordinator = 10
+	apiKeySaslHandshake   = 17
+	apiKeyApiApiVersions  = 18
 
 	brokersKeyName = "brokers"
 	hostKeyName    = "host"
@@ -23,7 +25,64 @@ const (
 var (
 	metadataResponseSchemaVersions        = createMetadataResponseSchemaVersions()
 	findCoordinatorResponseSchemaVersions = createFindCoordinatorResponseSchemaVersions()
+	apiVersionsResponseSchemaVersions     = createApiVersionsResponseSchemaVersions()
+	apiVersionSchema                      = createApiVersionSchema()
 )
+
+func createApiVersionSchema() Schema {
+	return NewSchema("api_version",
+		&Mfield{Name: "api_key", Ty: TypeInt16},
+		&Mfield{Name: "min_version", Ty: TypeInt16},
+		&Mfield{Name: "max_version", Ty: TypeInt16},
+	)
+}
+
+func createApiVersionsResponseSchemaVersions() []Schema {
+	// Version 0: error_code + api_keys
+	apiVersionsResponseV0 := NewSchema("api_versions_response_v0",
+		&Mfield{Name: "error_code", Ty: TypeInt16},
+		&Array{Name: "api_keys", Ty: apiVersionSchema},
+	)
+
+	// Version 1: error_code + api_keys + throttle_time_ms
+	apiVersionsResponseV1 := NewSchema("api_versions_response_v1",
+		&Mfield{Name: "error_code", Ty: TypeInt16},
+		&Array{Name: "api_keys", Ty: apiVersionSchema},
+		&Mfield{Name: "throttle_time_ms", Ty: TypeInt32},
+	)
+
+	// Version 2: Same as version 1
+	apiVersionsResponseV2 := apiVersionsResponseV1
+
+	// ApiVersion struct for flexible versions (v3+) with compact arrays
+	apiVersionV3 := NewSchema("api_version_v3",
+		&Mfield{Name: "api_key", Ty: TypeInt16},
+		&Mfield{Name: "min_version", Ty: TypeInt16},
+		&Mfield{Name: "max_version", Ty: TypeInt16},
+		&SchemaTaggedFields{Name: "api_version_tagged_fields"},
+	)
+
+	// Version 3: Flexible version with tagged fields
+	// Tagged fields: supported_features (tag 0), finalized_features_epoch (tag 1),
+	// finalized_features (tag 2), zk_migration_ready (tag 3)
+	apiVersionsResponseV3 := NewSchema("api_versions_response_v3",
+		&Mfield{Name: "error_code", Ty: TypeInt16},
+		&CompactArray{Name: "api_keys", Ty: apiVersionV3},
+		&Mfield{Name: "throttle_time_ms", Ty: TypeInt32},
+		&SchemaTaggedFields{Name: "response_tagged_fields"},
+	)
+
+	// Version 4: Same as version 3
+	apiVersionsResponseV4 := apiVersionsResponseV3
+
+	return []Schema{
+		apiVersionsResponseV0,
+		apiVersionsResponseV1,
+		apiVersionsResponseV2,
+		apiVersionsResponseV3,
+		apiVersionsResponseV4,
+	}
+}
 
 func createMetadataResponseSchemaVersions() []Schema {
 	metadataBrokerV0 := NewSchema("metadata_broker_v0",
@@ -325,6 +384,30 @@ func createFindCoordinatorResponseSchemaVersions() []Schema {
 	return []Schema{findCoordinatorResponseV0, findCoordinatorResponseV1, findCoordinatorResponseV2, findCoordinatorResponseV3, findCoordinatorResponseV4, findCoordinatorResponseV5, findCoordinatorResponseV6}
 }
 
+func modifyApiVersionsResponse(decodedStruct *Struct, fn config.NetAddressMappingFunc) error {
+	if decodedStruct == nil {
+		return errors.New("decoded struct must not be nil")
+	}
+
+	versions, ok := decodedStruct.Get("api_keys").([]interface{})
+	if !ok {
+		return errors.New("versions not found")
+	}
+	for _, versionElement := range versions {
+		version := versionElement.(*Struct)
+		if version.Get("api_key").(int16) == apiKeySaslHandshake {
+			return nil
+		}
+	}
+
+	versions = append(versions, &Struct{
+		Schema: apiVersionSchema,
+		Values: []any{int16(17), int16(0), int16(0)},
+	})
+
+	return decodedStruct.Replace("api_keys", versions)
+}
+
 func modifyMetadataResponse(decodedStruct *Struct, fn config.NetAddressMappingFunc) error {
 	if decodedStruct == nil {
 		return errors.New("decoded struct must not be nil")
@@ -467,6 +550,8 @@ func (f *responseModifier) Apply(resp []byte) ([]byte, error) {
 
 func GetResponseModifier(apiKey int16, apiVersion int16, addressMappingFunc config.NetAddressMappingFunc) (ResponseModifier, error) {
 	switch apiKey {
+	case apiKeyApiApiVersions:
+		return newResponseModifier(apiKey, apiVersion, addressMappingFunc, apiVersionsResponseSchemaVersions, modifyApiVersionsResponse)
 	case apiKeyMetadata:
 		return newResponseModifier(apiKey, apiVersion, addressMappingFunc, metadataResponseSchemaVersions, modifyMetadataResponse)
 	case apiKeyFindCoordinator:
