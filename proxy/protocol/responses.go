@@ -11,7 +11,7 @@ const (
 	apiKeyMetadata        = 3
 	apiKeyFindCoordinator = 10
 	apiKeySaslHandshake   = 17
-	apiKeyApiApiVersions  = 18
+	apiKeyApiVersions     = 18
 
 	brokersKeyName = "brokers"
 	hostKeyName    = "host"
@@ -26,28 +26,25 @@ var (
 	metadataResponseSchemaVersions        = createMetadataResponseSchemaVersions()
 	findCoordinatorResponseSchemaVersions = createFindCoordinatorResponseSchemaVersions()
 	apiVersionsResponseSchemaVersions     = createApiVersionsResponseSchemaVersions()
-	apiVersionSchema                      = createApiVersionSchema()
 )
 
-func createApiVersionSchema() Schema {
-	return NewSchema("api_version",
+func createApiVersionsResponseSchemaVersions() []Schema {
+	apiVersionV0 := NewSchema("api_version",
 		&Mfield{Name: "api_key", Ty: TypeInt16},
 		&Mfield{Name: "min_version", Ty: TypeInt16},
 		&Mfield{Name: "max_version", Ty: TypeInt16},
 	)
-}
 
-func createApiVersionsResponseSchemaVersions() []Schema {
 	// Version 0: error_code + api_keys
 	apiVersionsResponseV0 := NewSchema("api_versions_response_v0",
 		&Mfield{Name: "error_code", Ty: TypeInt16},
-		&Array{Name: "api_keys", Ty: apiVersionSchema},
+		&Array{Name: "api_keys", Ty: apiVersionV0},
 	)
 
 	// Version 1: error_code + api_keys + throttle_time_ms
 	apiVersionsResponseV1 := NewSchema("api_versions_response_v1",
 		&Mfield{Name: "error_code", Ty: TypeInt16},
-		&Array{Name: "api_keys", Ty: apiVersionSchema},
+		&Array{Name: "api_keys", Ty: apiVersionV0},
 		&Mfield{Name: "throttle_time_ms", Ty: TypeInt32},
 	)
 
@@ -389,8 +386,8 @@ func modifyApiVersionsResponse(decodedStruct *Struct, fn config.NetAddressMappin
 		return errors.New("decoded struct must not be nil")
 	}
 
-	versions, ok := decodedStruct.Get("api_keys").([]interface{})
-	if !ok {
+	versions, ok := decodedStruct.Get("api_keys").([]any)
+	if !ok || len(versions) == 0 {
 		return errors.New("versions not found")
 	}
 	for _, versionElement := range versions {
@@ -400,9 +397,17 @@ func modifyApiVersionsResponse(decodedStruct *Struct, fn config.NetAddressMappin
 		}
 	}
 
+	schema := versions[0].(*Struct).GetSchema()
+
+	values := []any{int16(17), int16(0), int16(1)}
+
+	if len(schema.GetFields()) > 3 {
+		values = append(values, []rawTaggedField{})
+	}
+
 	versions = append(versions, &Struct{
-		Schema: apiVersionSchema,
-		Values: []any{int16(17), int16(0), int16(0)},
+		Schema: schema,
+		Values: values,
 	})
 
 	return decodedStruct.Replace("api_keys", versions)
@@ -550,7 +555,7 @@ func (f *responseModifier) Apply(resp []byte) ([]byte, error) {
 
 func GetResponseModifier(apiKey int16, apiVersion int16, addressMappingFunc config.NetAddressMappingFunc) (ResponseModifier, error) {
 	switch apiKey {
-	case apiKeyApiApiVersions:
+	case apiKeyApiVersions:
 		return newResponseModifier(apiKey, apiVersion, addressMappingFunc, apiVersionsResponseSchemaVersions, modifyApiVersionsResponse)
 	case apiKeyMetadata:
 		return newResponseModifier(apiKey, apiVersion, addressMappingFunc, metadataResponseSchemaVersions, modifyMetadataResponse)
