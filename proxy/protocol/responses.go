@@ -401,6 +401,7 @@ func modifyApiVersionsResponse(decodedStruct *Struct, fn config.NetAddressMappin
 
 	values := []any{int16(17), int16(0), int16(1)}
 
+	// version 3+ of the api versions response
 	if len(schema.GetFields()) > 3 {
 		values = append(values, []rawTaggedField{})
 	}

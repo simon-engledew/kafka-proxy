@@ -42,6 +42,9 @@ func (r *RequestV2) decode(pd packetDecoder) (err error) {
 	if version, err = pd.getInt16(); err != nil {
 		return err
 	}
+	if version == -1 {
+		version = r.Body.version()
+	}
 	if r.Body.key() != key || r.Body.version() != version {
 		return PacketDecodingError{fmt.Sprintf("expected request key,version %d,%d but got %d,%d", r.Body.key(), r.Body.version(), key, version)}
 	}
