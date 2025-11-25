@@ -399,7 +399,8 @@ func modifyApiVersionsResponse(decodedStruct *Struct, fn config.NetAddressMappin
 
 	schema := versions[0].(*Struct).GetSchema()
 
-	values := []any{int16(17), int16(0), int16(1)}
+	// v1 Sasl auth does not seem to work with KafkaJS so pin to v0
+	values := []any{int16(17), int16(0), int16(0)}
 
 	// version 3+ of the api versions response
 	if len(schema.GetFields()) > 3 {
